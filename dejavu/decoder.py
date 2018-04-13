@@ -53,8 +53,10 @@ def read(filename, limit=None):
         if limit:
             audiofile = audiofile[:limit * 1000]
 
-        data = np.fromstring(audiofile._data, np.int16)
+        # the shape of the data is an 1d array.
+        data = np.fromstring(audiofile.raw_data, np.int16)
 
+        # Spilt the data into two arrays and put in channels.
         channels = []
         for chn in xrange(audiofile.channels):
             channels.append(data[chn::audiofile.channels])

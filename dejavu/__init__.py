@@ -1,8 +1,10 @@
 from dejavu.database import get_database, Database
+from collections import defaultdict
 import dejavu.decoder as decoder
 import fingerprint
 import multiprocessing
 import os
+import operator
 import traceback
 import sys
 
@@ -15,6 +17,7 @@ class Dejavu(object):
     MATCH_TIME = 'match_time'
     OFFSET = 'offset'
     OFFSET_SECS = 'offset_seconds'
+    DISPLAY_TOP_N = 20
 
     def __init__(self, config):
         super(Dejavu, self).__init__()
@@ -50,7 +53,6 @@ class Dejavu(object):
             nprocesses = 1
         else:
             nprocesses = 1 if nprocesses <= 0 else nprocesses
-
         pool = multiprocessing.Pool(nprocesses)
 
         filenames_to_fingerprint = []
@@ -68,8 +70,7 @@ class Dejavu(object):
                            [self.limit] * len(filenames_to_fingerprint))
 
         # Send off our tasks
-        iterator = pool.imap_unordered(_fingerprint_worker,
-                                       worker_input)
+        iterator = pool.imap_unordered(_fingerprint_worker, worker_input)
 
         # Loop till we have all of them
         while True:
@@ -124,43 +125,43 @@ class Dejavu(object):
             Returns a dictionary with match information.
         """
         # align by diffs
-        diff_counter = {}
+        diff_counter = defaultdict(lambda: defaultdict(int))
         largest = 0
-        largest_count = 0
-        song_id = -1
-        for tup in matches:
-            sid, diff = tup
-            if diff not in diff_counter:
-                diff_counter[diff] = {}
-            if sid not in diff_counter[diff]:
-                diff_counter[diff][sid] = 0
-            diff_counter[diff][sid] += 1
+        for sid, diff in matches:
+            diff_counter[diff][sid] = diff_counter[diff][sid] + 1
 
-            if diff_counter[diff][sid] > largest_count:
-                largest = diff
-                largest_count = diff_counter[diff][sid]
-                song_id = sid
+        results = defaultdict(int)
+        for diff, sid_dic in diff_counter.items():
+            for sid, confidence in sid_dic.items():
+                results[str(sid) + " " + str(diff)] = confidence
+        sorted_results = sorted(results.items(), key=operator.itemgetter(1), reverse=True)
 
-        # extract idenfication
-        song = self.db.get_song_by_id(song_id)
-        if song:
-            # TODO: Clarify what `get_song_by_id` should return.
-            songname = song.get(Dejavu.SONG_NAME, None)
-        else:
-            return None
+        song_list = []
+        for i, tuple in enumerate(sorted_results):
+            if i >= Dejavu.DISPLAY_TOP_N:
+                break;
 
-        # return match info
-        nseconds = round(float(largest) / fingerprint.DEFAULT_FS *
-                         fingerprint.DEFAULT_WINDOW_SIZE *
-                         fingerprint.DEFAULT_OVERLAP_RATIO, 5)
-        song = {
-            Dejavu.SONG_ID : song_id,
-            Dejavu.SONG_NAME : songname,
-            Dejavu.CONFIDENCE : largest_count,
-            Dejavu.OFFSET : int(largest),
-            Dejavu.OFFSET_SECS : nseconds,
-            Database.FIELD_FILE_SHA1 : song.get(Database.FIELD_FILE_SHA1, None),}
-        return song
+            song_id, confidence = tuple;
+            song_id, diff = song_id.split(" ")
+            song = self.db.get_song_by_id(song_id)
+            if song:
+                # TODO: Clarify what `get_song_by_id` should return.
+                songname = song.get(Dejavu.SONG_NAME, None)
+            else:
+                return None
+
+            # return match info
+            nseconds = round(float(diff) / fingerprint.DEFAULT_FS *
+                             fingerprint.DEFAULT_WINDOW_SIZE *
+                             fingerprint.DEFAULT_OVERLAP_RATIO, 5)
+            song = {
+                Dejavu.SONG_ID : song_id,
+                Dejavu.SONG_NAME : songname,
+                Dejavu.CONFIDENCE : confidence,
+                Dejavu.OFFSET : int(diff),
+                Dejavu.OFFSET_SECS : nseconds,}
+            song_list.append(song)
+        return song_list
 
     def recognize(self, recognizer, *options, **kwoptions):
         r = recognizer(self)

@@ -1,7 +1,10 @@
 *.pyc
 wav
 mp3
+*.iml
+/venv/*
 *.wav
 *.mp3
+/.idea
 .DS_Store
 *.cnf
